@@ -81,7 +81,7 @@ typedef enum
 
 // Highligtht IARU regions   19.09.2020 DH1AKF // DG2DRF
 
-// region 1            10.04.2020 DG2DRF
+// Region 1            10.04.2020 DG2DRF
 
 static const HAM_BANDS hamBands1[] =
 {
@@ -98,9 +98,11 @@ static const HAM_BANDS hamBands1[] =
     {24890ul, 24990ul},
     {28000ul, 29700ul},
     {50000ul, 52000ul},
+    {70000ul, 70500ul},
     {144000ul, 146000ul},
-    {222000ul, 225000ul},
+    {222000ul, 222000ul},// not allowed
     {430000ul, 440000ul},
+    {902000ul, 902000ul},// not allowed
     {1240000ul, 1300000ul},
 
 };
@@ -122,6 +124,7 @@ static const HAM_BANDS hamBands2[] =
     {24890ul, 24990ul},
     {28000ul, 29700ul},
     {50000ul, 54000ul},
+    {70000ul, 70000ul},// not allowed
     {144000ul, 148000ul},
     {222000ul, 225000ul},
     {430000ul, 450000ul},
@@ -137,6 +140,7 @@ static const HAM_BANDS hamBands3[] =
     {472ul,   479ul},
     {1800ul,  2000ul},
     {3500ul,  3900ul},
+    {5351ul,  5366ul},
     {7000ul,  7300ul},
     {10100ul, 10150ul},
     {14000ul, 14350ul},
@@ -145,9 +149,12 @@ static const HAM_BANDS hamBands3[] =
     {24890ul, 24990ul},
     {28000ul, 29700ul},
     {50000ul, 54000ul},
+    {70000ul, 70000ul},// not allowed
     {144000ul, 148000ul},
+    {222000ul, 222000ul},// not allowed
     {430000ul, 450000ul},
-    {1240000ul, 1300000ul},
+    {902000ul, 902000ul},// not allowed
+    {1240000ul,1300000ul},
 };
 
 // LPD Bänder ; not veryfied "low power devices"
@@ -170,6 +177,7 @@ static const uint32_t lpdNum       = sizeof(lpd) / sizeof(*lpd);
 
 static int holdScale;// hold scale for "Auto" mode
 static float MIN_S11;
+static uint32_t activeLayerX;
 
 //static const uint32_t hamBandsNum = sizeof(hamBands) / sizeof(*hamBands);
 
@@ -183,26 +191,20 @@ static const char *modstr = "EU1KY AA v." AAVERSION " ";
 static uint32_t modstrw = 0;
 // ** WK ** / DL8MBY:
 
-const char* BSSTR[] = {"2 kHz","4 kHz","10 kHz","20 kHz","40 kHz","100 kHz",\
-                       "200 kHz", "400 kHz", "1000 kHz", "2 MHz", "4 MHz", "10 MHz", "20 MHz",\
-                       "30 MHz", "40 MHz", "100 MHz", "200 MHz", "250 Mhz", "300 MHz",\
+const char* BSSTR[] = {"2 kHz","4 kHz","10 kHz","20 kHz","40 kHz","100 kHz","150 kHz",\
+                       "200 kHz","250 kHz", "300 kHz","400 kHz","500 kHz", "1000 kHz", "2 MHz", "4 MHz", "10 MHz", "20 MHz",\
+                       "30 MHz", "40 MHz", "60 MHz", "100 MHz", "200 MHz", "250 Mhz", "300 MHz",\
                        "350 MHz", "400 MHz", "450 MHz", "500 MHz", "700 MHz", "1.0 Ghz"
                       };
 const char* BSSTR_HALF[] = {"1 kHz","2 kHz","5 kHz","10 kHz","20 kHz",\
-                            "50 kHz","100 kHz", "200 kHz", "500 kHz", "1 MHz", "2 MHz", "5 MHz",\
-                            "10 MHz", "15 MHz", "20 MHz", "50 MHz", "100 MHz", "125 MHz", "150 MHz",\
+                            "50 kHz","75 kHz","100 kHz","125 kHz","150 kHz","200 kHz","250 kHz", "500 kHz", "1 MHz", "2 MHz", "5 MHz",\
+                            "10 MHz", "15 MHz", "20 MHz", "30 MHz", "50 MHz", "100 MHz", "125 MHz", "150 MHz",\
                             "175 MHz", "200 MHz", "225 MHz", "250 MHz", "350 MHz", "0.5 GHz"
                            };
-const uint32_t BSVALUES[] = {2,4,10,20,40,100,200, 400, 1000, 2000,\
-                             4000, 10000, 20000, 30000, 40000, 100000, 200000, 250000, 300000,\
-                             350000, 400000, 450000, 500000, 700000, 1000000
+const uint32_t BSVALUES[] = {2,4,10,20,40,100, 150, 200, 250, 300, 400, 500, 1000, 2000,\
+                             4000, 10000, 20000, 30000, 40000, 60000, 100000, 200000, 250000, 300000,\
+                             350000, 400000, 450000, 500000, 700000, 1000000\
                             };
-
-/*const char* BSSTR[] = {
-    "2 kHz","4 kHz","10 kHz","20 kHz","40 kHz","100 kHz","200 kHz", "400 kHz", "1000 kHz", "2 MHz", "4 MHz", "10 MHz", "20 MHz", "30 MHz", "40 MHz", "100 MHz"};
-const char* BSSTR_HALF[] = {"1 kHz","2 kHz","5 kHz","10 kHz","20 kHz","50 kHz","100 kHz", "200 kHz", "500 kHz", "1 MHz", "2 MHz", "5 MHz", "10 MHz", "15 MHz", "20 MHz", "50 MHz"};
-const uint32_t BSVALUES[] = {2,4,10,20,40,100,200, 400, 1000, 2000, 4000, 10000, 20000, 30000, 40000, 100000};
-*/
 
 extern uint8_t NotSleepMode;
 static char autoMeasureSpeed = 0;
@@ -559,14 +561,15 @@ static int IsFinHamBands(uint32_t f_kHz)
     }
 }
 
+int cursorVisible;
 
-static void DrawCursor()
+static void DrawCursor1()
 {
     int8_t i;
+    uint32_t LayerAct;
     LCDPoint p;
-   // if ((!isMeasured)||(AutoCursor==0))
-   //     return;
-
+    if(cursorVisible==0) cursorVisible=1;
+    else cursorVisible=0;
     if (grType == GRAPH_SMITH)
     {
         float complex rx = values[cursorPos]; //SmoothRX(cursorPos, f1 > (CFG_GetParam(CFG_PARAM_BAND_FMAX) / 1000) ? 1 : 0);
@@ -644,9 +647,24 @@ static void DrawCursor()
             X0 + cursorPos+2,Y0+WHEIGHT+3
         },TextColor);
     }
-    Sleep(5);
 
 }
+
+static void DrawCursor(){
+    DrawCursor1();
+    if(BSP_LCD_GetActiveLayer()!=activeLayerX){
+        BSP_LCD_SelectLayer(activeLayerX);
+        DrawCursor1();
+        BSP_LCD_SelectLayer(!activeLayerX);
+    }
+    else{
+        BSP_LCD_SelectLayer(!activeLayerX);
+        DrawCursor1();
+        BSP_LCD_SelectLayer(activeLayerX);
+    }
+}
+
+
 
 static void DrawCursorText()
 {
@@ -668,8 +686,8 @@ static void DrawCursorText()
         Q = fabs(cimagf(rx) / crealf(rx));
     if (Q > 2000.f)
         Q = 2000.f;
-    LCD_FillRect(LCD_MakePoint(150, Y0 + WHEIGHT + 16),LCD_MakePoint(409 , Y0 + WHEIGHT + 30),BackGrColor);
-    FONT_Print(FONT_FRAN, TextColor, BackGrColor, 60, Y0 + WHEIGHT + 16, "F: %.1f   Z: %.1f%+.1fj   SWR: %.1f   MCL: %.2f dB   Q: %.1f       ",
+    LCD_FillRect(LCD_MakePoint(20, Y0 + WHEIGHT + 16),LCD_MakePoint(409 , Y0 + WHEIGHT + 30),BackGrColor);
+    FONT_Print(FONT_FRAN, TextColor, BackGrColor, 20, Y0 + WHEIGHT + 16, "F: %.2f MHz  Z: %.1f%+.1fj   SWR: %.1f   MCL: %.2f dB   Q: %.1f       ",
                fcur/1000,
                crealf(rx),
                cimagf(rx),
@@ -693,8 +711,8 @@ static void DrawCursorTextWithS11()
     fcur = ((float)(fstart/1000. + (float)cursorPos * BSVALUES[span] / WWIDTH));///1000.;
     if (fcur * 1000.f > (float)(CFG_GetParam(CFG_PARAM_BAND_FMAX) + 1))
         fcur = 0.f;
-    LCD_FillRect(LCD_MakePoint(X0+9, Y0 + WHEIGHT + 16),LCD_MakePoint(409 , Y0 + WHEIGHT + 30),BackGrColor);
-    FONT_Print(FONT_FRAN, TextColor, BackGrColor, X0 +9, Y0 + WHEIGHT + 16, "F: %.1f   Z: %.1f%+.1fj   SWR: %.1f   S11: %.2f dB          ",
+    LCD_FillRect(LCD_MakePoint(X0-30, Y0 + WHEIGHT + 16),LCD_MakePoint(409 , Y0 + WHEIGHT + 30),BackGrColor);
+    FONT_Print(FONT_FRAN, TextColor, BackGrColor, X0 -30, Y0 + WHEIGHT + 16, "F: %.2f MHZ  Z: %.1f%+.1fj   SWR: %.1f   S11: %.2f dB          ",
                fcur/1000,
                crealf(rx),
                cimagf(rx),
@@ -731,9 +749,11 @@ static void DecrCursor()
         return;
     ManualCursor=1;
     AutoCursor=0;
-    DrawCursor();// delete the old cursor
+    if (cursorVisible==1)
+        DrawCursor();// delete the old cursor
     cursorPos--;
     DrawCursor();
+    cursorVisible=1;
     if ((grType == GRAPH_S11) && (CFG_GetParam(CFG_PARAM_S11_SHOW) == 1))
     {
         DrawCursorTextWithS11();
@@ -744,9 +764,9 @@ static void DecrCursor()
         DrawCursorText();
     }
     TEXTBOX_DrawContext(&SWR1);
-    if (cursorChangeCount++ < 10)
+    if (cursorChangeCount++ < 5)
         Sleep(100); //Slow down at first steps
-    Sleep(5);
+    Sleep(1);
 }
 
 static void IncrCursor()
@@ -757,9 +777,11 @@ static void IncrCursor()
         return;
     ManualCursor=1;
     AutoCursor=0;
-    DrawCursor();// delete the old cursor
+    if (cursorVisible==1)
+        DrawCursor();// delete the old cursor
     cursorPos++;
     DrawCursor();
+    cursorVisible=1;
     if ((grType == GRAPH_S11) && (CFG_GetParam(CFG_PARAM_S11_SHOW) == 1))
     {
         DrawCursorTextWithS11();
@@ -769,10 +791,10 @@ static void IncrCursor()
         DrawCursorText();
     }
     TEXTBOX_DrawContext(&SWR1);
-    if (cursorChangeCount++ < 10)
+    if (cursorChangeCount++ < 5)
         Sleep(100); //Slow down at first steps
 
-    Sleep(5);
+    Sleep(1);
 }
 
 static GRAPHTYPE grTypeOld;
@@ -782,20 +804,20 @@ static void DrawGrid(GRAPHTYPE grType)  //
 {
 int i;
 
-    if((grType != grTypeOld)||(ClearScreen==1)){
-        LCD_FillAll(BackGrColor);
+   /* if((grType != grTypeOld)||(ClearScreen==1)){
+      //  LCD_FillAll(BackGrColor);
+//        cursorVisible=0;
         grTypeOld=   grType;
         ClearScreen=0;
     }
-    else
+    else*/
 
     LCD_FillRect((LCDPoint){X0-30 ,Y0},(LCDPoint){X0 + WWIDTH+2,Y0+WHEIGHT+3},BackGrColor);
-
+    //cursorVisible=0;
     FONT_Write(FONT_FRAN, LCD_BLACK, LCD_COLOR_LIGHTGREEN, X0+1, 0, modstr);
-    //FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 2, 110, "<");
-    //FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 460, 110, ">");
     uint32_t fstart;
     uint32_t pos = modstrw + 8+ X0;//WK
+    LCD_FillRect((LCDPoint){pos ,0},(LCDPoint){479,20},BackGrColor);
     if (grType == GRAPH_RX)// R/X
     {
         //  Print colored R/X
@@ -806,7 +828,6 @@ int i;
         FONT_Write(FONT_FRAN, LCD_BLACK, LCD_RED, pos, 0, "X");
         pos += FONT_GetStrPixelWidth(FONT_FRAN, "X") + 1;
     }
-
 
     if (0 == CFG_GetParam(CFG_PARAM_PAN_CENTER_F))
     {
@@ -930,14 +951,6 @@ int i;
                 LCD_HLine(LCD_MakePoint(X0, WY(yofs)), WWIDTH, WGRIDCOLOR);
             }
         }
-        /*
-        LCD_FillRect((LCDPoint){0 ,155},(LCDPoint){X0 -22,215},BackGrColor);
-
-        LCD_Rectangle((LCDPoint){0 ,155},(LCDPoint){X0 -22,215},CurvColor);
-        FONT_Write(FONT_FRAN, CurvColor, BackGrColor, 4, 160, "Log");
-        if(loglog==1)
-            FONT_Write(FONT_FRAN, CurvColor, BackGrColor, 4, 190, "Log");
-            */
     }
 }
 
@@ -1004,6 +1017,7 @@ static void ScanRXFast(void)
         values[i] = OSL_ZFromG(Gi, 50.f);
     }
      LCD_FillRect((LCDPoint){X0 ,Y0},(LCDPoint){X0 + WWIDTH+2,Y0+WHEIGHT+3},BackGrColor);
+     //cursorVisible=0;
 }
 
 static uint32_t Fs, Fp;// in Hz
@@ -1180,9 +1194,9 @@ static uint32_t MinIndex;
 
 static void DrawVSWR(void)
 {
-    FONT_Write(FONT_FRANBIG, CurvColor, BackGrColor, X0 -46, Y0-12, "S");
-    FONT_Write(FONT_FRANBIG, CurvColor, BackGrColor, X0 -50, Y0+18, "W");
-    FONT_Write(FONT_FRANBIG, CurvColor, BackGrColor, X0 -46, Y0+48, "R");
+    FONT_Write(FONT_FRANBIG, CurvColor, BackGrColor, X0 -46, 1, "S");
+    FONT_Write(FONT_FRANBIG, CurvColor, BackGrColor, 0, 31, "W");
+    FONT_Write(FONT_FRANBIG, CurvColor, BackGrColor, X0 -46, 61, "R");
     if(grType==GRAPH_VSWR_Z)
         FONT_Write(FONT_FRANBIG, LCD_RED, BackGrColor, X0 +405, Y0+40, "|Z|");
     if (!isMeasured)
@@ -1312,9 +1326,8 @@ static void DrawVSWR(void)
         DrawRX(0,1);
     }
 
-    DrawCursor();
-    //BSP_LCD_SetTransparency(1,255);
-    //BSP_LCD_SelectLayer(0);
+//    DrawCursor();
+ //   cursorVisible=1;
 }
 
 static void LoadBkups()
@@ -1391,9 +1404,9 @@ static float nicenum(float x, int round)
 
 static void DrawS11()
 {
-    FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 0, Y0,    "S ");
-    FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 0, Y0+26, "1 ");
-    FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 0, Y0+52, "1 ");
+    FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 0, Y0-18,"S ");
+    FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 0, Y0+8, "1 ");
+    FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 0, Y0+34,"1 ");
     int i;
     int j;
     float minS11;
@@ -1437,9 +1450,9 @@ static void DrawS11()
         sprintf(buf, str, labelValue); //Get label string in buf
         yofs = S11OFFS(labelValue);
         FONT_Write(FONT_FRAN, TextColor, BackGrColor,  X0 - 21, WY(yofs) - 12, buf);// FONT_SDIGITS WK
-        if (roundf(labelValue) == 0)
+       /* if (roundf(labelValue) == 0)
             LCD_HLine(LCD_MakePoint(X0, WY(S11OFFS(0.f))), WWIDTH, WGRIDCOLOR);
-        else
+        else*/
             LCD_HLine(LCD_MakePoint(X0, WY(yofs)), WWIDTH, WGRIDCOLOR);
 
     }
@@ -1476,7 +1489,6 @@ static void DrawS11()
     }
     if((AutoCursor==1) && (ManualCursor==0)){
         cursorPos=MaxJ;
-        DrawCursor();
     }
     FONT_Write(FONT_FRAN, LCD_BLACK, LCD_COLOR_LIGHTGREEN, X0+1, 0, modstr);
     if (0 == CFG_GetParam(CFG_PARAM_PAN_CENTER_F))
@@ -1484,6 +1496,7 @@ static void DrawS11()
     else
        sprintf(str, "S11 graph: %.2f MHz +/- %s", (float)f1/1000000, BSSTR_HALF[span]);
     FONT_Write(FONT_FRAN, CurvColor, BackGrColor, 160, 0, str);
+    //DrawCursor();
 }
 
 void DrawX_Scale(float MaxZ, float MinZ)
@@ -1541,8 +1554,8 @@ static void DrawRX(int SelQu, int SelEqu)// SelQu=1, if quartz measurement  SelE
     }
     if(SelQu==0)
     {
-        FONT_Write(FONT_FRANBIG, RCurvColor, BackGrColor, RXX0 +412, Y0, "R");
-        FONT_Write(FONT_FRANBIG, TextColor, LCD_RED, RXX0 +412, Y0+46, "X");
+        FONT_Write(FONT_FRANBIG, RCurvColor, BackGrColor, RXX0 +412, Y0-18, "R");
+        FONT_Write(FONT_FRANBIG, TextColor, LCD_RED, RXX0 +412, Y0+28, "X");
     }
     if (!isMeasured)
         return;
@@ -1744,6 +1757,8 @@ static void DrawRX(int SelQu, int SelEqu)// SelQu=1, if quartz measurement  SelE
         lastoffset = yofs;
         lastoffset_sm = yofs_sm;
     }
+    //if (grType != GRAPH_VSWR_RX)
+    //    DrawCursor();
 }
 
 static void DrawSmith(void)
@@ -1807,6 +1822,7 @@ static void RedrawWindow()
     else
         DrawSmith();
     DrawCursor();
+    cursorVisible=1;
     if ((isMeasured) && (grType != GRAPH_S11))
     {
         DrawCursorText();
@@ -1912,7 +1928,7 @@ uint32_t  GetFrequency(uint32_t f0)
 }
 
 
-uint32_t fxs = 3600000ul; //Scan range start frequency, in Hz
+uint32_t fxs = 3500000ul; //Scan range start frequency, in Hz
 uint32_t fxkHzs;//Scan range start frequency, in kHz
 BANDSPAN *pBss;
 
@@ -1920,8 +1936,9 @@ void SWR_SetFrequency(void)
 {
 //    while(TOUCH_IsPressed()); WK
     fxs=CFG_GetParam(CFG_PARAM_MEAS_F);
+
     fxkHzs=fxs/1000;
-    span=BS400;
+    span=BS300;
 
     if (PanFreqWindow(&fxkHzs, (BANDSPAN*)&span))
     {
@@ -2479,17 +2496,17 @@ void DrawLoadStoreStatus(void);
 void DrawFootText(void)
 {
     TEXTBOX_DrawContext(&SWR1);
-    LCD_Rectangle(LCD_MakePoint(1, 100),
-                  LCD_MakePoint(25, 128),M_FGCOLOR);
-    FONT_Write(FONT_FRAN, TextColor, BackGrColor, 7, 105, "<");
+    LCD_Rectangle(LCD_MakePoint(1, 93),
+                  LCD_MakePoint(27, 128),M_FGCOLOR);
+    FONT_Write(FONT_FRAN, TextColor, BackGrColor, 9, 101, "<");
     LCD_Rectangle(LCD_MakePoint(1, 132),
-                  LCD_MakePoint(25, 160),M_FGCOLOR);
-    FONT_Write(FONT_FRAN, TextColor, BackGrColor, 7, 138, ">");
+                  LCD_MakePoint(27, 167),M_FGCOLOR);
+    FONT_Write(FONT_FRAN, TextColor, BackGrColor, 9, 140, ">");
 
     if(Switch == 0)
     {
         TEXTBOX_SetText(&SWR1,1,"Menu2");
-        TEXTBOX_SetText(&SWR1,5,"Auto(fast)");
+        TEXTBOX_SetText(&SWR1,5,"Auto (fast)");
         TEXTBOX_SetText(&SWR1,6,"Scan");
 
         //DrawLoadStoreStatus();
@@ -2508,9 +2525,15 @@ void DrawFootText(void)
         }
         TEXTBOX_SetText(&SWR1,6,"Frequency");
     }
-
     DrawLoadStoreStatus();
-
+    if(autofast==1)
+        {
+            LCD_Rectangle(LCD_MakePoint(328, 248), LCD_MakePoint(408, 270),0xffff0000);//  Red
+        }
+        else
+        {
+            LCD_Rectangle(LCD_MakePoint(328, 248), LCD_MakePoint(408, 270),M_FGCOLOR);
+        }
 }
 
 void ZoomMinus(void)
@@ -2580,7 +2603,6 @@ void Store(void) //             Button 2
 
 void DiagType(void) //                      Button3
 {
-    int k;
     autofast=0;
     // toggle Diagram Type
     if (grType == GRAPH_VSWR)
@@ -2598,7 +2620,10 @@ void DiagType(void) //                      Button3
     else
         grType = GRAPH_VSWR;
     redrawRequired = 1;
-
+    LCD_FillAll(BackGrColor);
+    activeLayerX=!BSP_LCD_GetActiveLayer();
+    BSP_LCD_SelectLayer(activeLayerX);
+    LCD_FillAll(BackGrColor);
 }
 
 void Save_Snap(void) // Save Snap             Button4
@@ -2630,6 +2655,7 @@ void Auto_Fast(void) // Auto(fast)            Button5
         CFG_Flush();
         redrawRequired=1;
     }
+    DrawFootText();
 }
 
 //Use by Frequency Sweep Measurement
@@ -2841,9 +2867,13 @@ static void DrawHelp(void)
 {
     FONT_Write(FONT_FRAN, LCD_PURPLE, LCD_BLACK, 160,  20, "(Tap here to set F and Span)");
     FONT_Write(FONT_FRAN, LCD_PURPLE, LCD_BLACK, 160, 140, "(Tap here to change graph type)");
+    FONT_Write(FONT_FRAN, LCD_PURPLE, LCD_BLACK, 160, 210, "(Tap here to set the cursor)");
     LCD_Rectangle(LCD_MakePoint(0, 0), LCD_MakePoint(479, 59),0xffff0000);//  Red DH1AKF 05.10.2020
     LCD_Rectangle(LCD_MakePoint(80, 60), LCD_MakePoint(400, 180),0xffff0000);//  Red
-    LCD_Rectangle(LCD_MakePoint(0, 225), LCD_MakePoint(479, 271),0xffff0000);//  Red
+    LCD_Rectangle(LCD_MakePoint(X0, 205), LCD_MakePoint(X0+WWIDTH, 235),0xffff0000);//  Red
+    LCD_Rectangle(LCD_MakePoint(0, 240), LCD_MakePoint(479, 271),0xffff0000);//  Red
+    LCD_Rectangle(LCD_MakePoint(1, 90), LCD_MakePoint(50, 233),0xffff0000);//  Red
+    //LCD_Rectangle(LCD_MakePoint(0, 240), LCD_MakePoint(479, 271),0xffff0000);//  Red
 
 }
 
@@ -2978,7 +3008,12 @@ void DrawLoadStoreStatus()
 
 void PANVSWR2_Proc(void)// **************************************************************************+*********
 {
-int Beeper=0;
+int Beeper=0, FirstTouch=0;
+
+    activeLayerX=1;
+    BSP_LCD_SelectLayer(activeLayerX);
+    LCD_ShowActiveLayerOnly();
+    cursorVisible=0;// in the beginning not visible
     ClearScreen=1;
     autofast=0;
     Saving=0;
@@ -2991,6 +3026,8 @@ int Beeper=0;
     //SWRTone=0;
     isStored=0;
     holdScale=0;
+    f1=CFG_GetParam(CFG_PARAM_PAN_F1);
+    GetBS(f1/1000);
     LCD_FillAll(BackGrColor);
     FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 120, 100, "Panoramic scan mode");
     Sleep(1000);
@@ -3034,7 +3071,6 @@ int Beeper=0;
     {
         modstrw = FONT_GetStrPixelWidth(FONT_FRAN, modstr);
     }
-
     if (!isMeasured)
     {
         DrawGrid(1);
@@ -3043,6 +3079,7 @@ int Beeper=0;
     }
     else
         RedrawWindow();
+
 
     TEXTBOX_InitContext(&SWR1);
 
@@ -3055,9 +3092,15 @@ int Beeper=0;
         Sleep(0); //for autosleep to work
         if (TOUCH_Poll(&pt))
         {
-            //LCD_FillAll(BackGrColor);//
+            if(FirstTouch<1){
+                FirstTouch++;
+                BSP_LCD_SelectLayer(activeLayerX);
+                LCD_FillAll(BackGrColor);
+                BSP_LCD_SelectLayer(!activeLayerX);
+                LCD_FillAll(BackGrColor);
+            }
             if(pt.y<60) Frequency();//              Special Functions (invisible)
-            else if((pt.y<180)&&(pt.x>60)&&(pt.x<400))
+            else if((pt.y<190)&&(pt.x>60)&&(pt.x<400))
             {
                 DiagType();// next diagram type
                 ManualCursor=0;
@@ -3068,34 +3111,58 @@ int Beeper=0;
                     Sleep(100);
                     UB_TIMER2_Stop();
                 }
-                Sleep(500);
+                Sleep(200);
             }
-            else if((pt.x>=0)&&(pt.x<=24))
+            else if((pt.y>205)&&(pt.y<235)&&(pt.x >=X0)){// Set Cursor
+                cursorPos=pt.x - X0;
+                ManualCursor=1;
+                redrawRequired=1;
+                Beeper=1;
+            }
+            else if((pt.x>=0)&&(pt.x<=44))
             {
-                if((pt.y>=100)&&(pt.y<=128)){//       "<"
+                Beeper=1;
+                if((pt.y>=93)&&(pt.y<=128)){//       "<"
                     DecrCursor();
-                    Beeper=1;
+                    if(cursorChangeCount>=5)
+                        Beeper=0;
                     autofast=0;
-                    redrawRequired=1;
+                    //redrawRequired=1;
                 }
-                else if((pt.y>=132)&&(pt.y<=160)){// ">"
+                else if((pt.y>=132)&&(pt.y<=167)){// ">"
                     IncrCursor();
-                    Beeper=1;
+                    if(cursorChangeCount>=5)
+                        Beeper=0;
                     autofast=0;
-                    redrawRequired=1;
+                    //redrawRequired=1;
                 }
-                else
+               // else
+               //    Sleep(100);
+            }
+            if (TEXTBOX_HitTest(&SWR1)) {
+                if (rqExitSWR)
+                {
+                    rqExitSWR=false;
+                    while(TOUCH_IsPressed());
+                    autofast = 0;
                     Sleep(100);
-                if(BeepOn1==1&&Beeper==1){
 
-                    UB_TIMER2_Init_FRQ(880);
-                    UB_TIMER2_Start();
-                    Sleep(100);
-                    UB_TIMER2_Stop();
-                    Beeper=0;
+                    free(SavedValues1);
+                    free(SavedValues2);
+                    free(SavedValues3);
+
+                    NotSleepMode = 0;
+                    return;
                 }
             }
-
+            if(BeepOn1==1&&Beeper==1){
+                UB_TIMER2_Init_FRQ(880);
+                UB_TIMER2_Start();
+                Sleep(100);
+                UB_TIMER2_Stop();
+                Beeper=0;
+                redrawRequired=1;//in case of "Save Snapshot"
+            }
         }
         else
         {
@@ -3103,43 +3170,26 @@ int Beeper=0;
             beep=0;
         }
 
-        if (TEXTBOX_HitTest(&SWR1))
-        {
-            if (rqExitSWR)
-            {
-                rqExitSWR=false;
-                while(TOUCH_IsPressed());
-                autofast = 0;
-                Sleep(100);
-
-                free(SavedValues1);
-                free(SavedValues2);
-                free(SavedValues3);
-
-                NotSleepMode = 0;
-                return;
-            }
-            redrawRequired=1;//in case of "Save Snapshot"
+        if(autofast==0){
+            holdScale=0;
         }
-
+        else{
+    // in fast mode alternate the active layer
+            activeLayerX=!BSP_LCD_GetActiveLayer();
+            BSP_LCD_SelectLayer(activeLayerX);
+            ScanRXFast();
+            RedrawWindow();
+            holdScale=1;
+            redrawRequired=0;
+            autosleep_timer = 30000; //CFG_GetParam(CFG_PARAM_LOWPWR_TIME);
+        }
         if(redrawRequired!=0)
         {
             RedrawWindow();
             DrawFootText();
-            DrawCursor();
             redrawRequired=0;
         }
-        if(autofast==0){
-            holdScale=0;
-            LCD_Rectangle(LCD_MakePoint(328, 248), LCD_MakePoint(408, 270),M_FGCOLOR);
-        }
-        else
-        {
-            LCD_Rectangle(LCD_MakePoint(328, 248), LCD_MakePoint(408, 270),0xffff0000);//  Red
-            ScanRXFast();
-            holdScale=1;
-            redrawRequired=1;
-        }
+        LCD_ShowActiveLayerOnly();
         NotSleepMode = autofast;
     }
 }

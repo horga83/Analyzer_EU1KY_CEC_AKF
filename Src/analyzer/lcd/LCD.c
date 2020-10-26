@@ -53,6 +53,8 @@ void LCD_BacklightOn(void)
     BSP_LCD_DisplayOn();
 }
 
+
+
 void LCD_BacklightOff(void)
 {
     BSP_LCD_DisplayOff();
@@ -127,9 +129,13 @@ void LCD_WaitForRedraw(void)
 
 void LCD_FillRect(LCDPoint p1, LCDPoint p2, LCDColor color)
 {
-    if(p1.x==p2.x) return;
-    if(p1.y==p2.y) return;
  LCDPoint px;
+
+    if (p1.x >= 480) p1.x = 479;
+    if (p2.x >= 480) p2.x = 479;
+    if (p1.y >= 272) p1.y = 271;
+    if (p2.y >= 272) p2.y = 271;
+
     if(LCD_Get_Orientation()==1){
     // rotate
        p1.x=479-p1.x;
@@ -137,11 +143,6 @@ void LCD_FillRect(LCDPoint p1, LCDPoint p2, LCDColor color)
        p1.y=271-p1.y;
        p2.y=271-p2.y;
     }
-
-    if (p1.x >= LCD_GetWidth()) p1.x = LCD_GetWidth() - 1;
-    if (p2.x >= LCD_GetWidth()) p2.x = LCD_GetWidth() - 1;
-    if (p1.y >= LCD_GetHeight()) p1.y = LCD_GetHeight() - 1;
-    if (p2.y >= LCD_GetHeight()) p2.y = LCD_GetHeight() - 1;
 
     if(p1.x>p2.x) {
         px.x=p1.x;// exchange p1<-> p2
@@ -153,10 +154,9 @@ void LCD_FillRect(LCDPoint p1, LCDPoint p2, LCDColor color)
         p2.y=px.y;
     }
 
-
     color |= 0xFF000000;
     BSP_LCD_SetTextColor(color);
-    BSP_LCD_FillRect(p1.x, p1.y, p2.x - p1.x +1, p2.y - p1.y +1);
+    BSP_LCD_FillRect(p1.x, p1.y, p2.x - p1.x +1, p2.y - p1.y );
 }
 
 void LCD_InvertRect(LCDPoint p01, LCDPoint p02)
@@ -545,8 +545,8 @@ void PixPict(unsigned int x0, unsigned int y0, char* bmp){// x0/y0 upper left co
 
 uint32_t col,l=0;
 uint16_t sp,z;
-    for(z=y0;z<271-y0;z++){// center the picture
-        for(sp=x0;sp<479-x0;sp++){
+    for(z=y0;z<272-y0;z++){// center the picture
+        for(sp=x0;sp<480-x0;sp++){
             col=(bmp[l++])<<16;
             col+=(bmp[l++])<<8;
             col+=bmp[l++];
