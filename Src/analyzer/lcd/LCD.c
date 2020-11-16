@@ -102,7 +102,6 @@ void LCD_Init(void)
 
     BSP_LCD_SetTransparency(0, 255);
     BSP_LCD_SetTransparency(1, 255);
-   // LCD_Set_Orientation(CFG_GetParam(CFG_PARAM_ORIENTATION));
 }
 /*
 void LCD_TurnOn(void)
@@ -261,20 +260,20 @@ void LCD_Line(LCDPoint a, LCDPoint b, LCDColor color)
         a.y = 271;
     if (b.y >= 271)
         b.y = 271;
-    /*if(a.y==b.y){
+    if(a.y==b.y){
         if(b.x>a.x)
             LCD_HLine(LCD_MakePoint(a.x, a.y), b.x - a.x+1, color);
         else
             LCD_HLine(LCD_MakePoint(b.x, a.y), a.x - b.x+1, color);
         return;
     }
-    if(a.x==b.x){
+    if((a.x==b.x)||(a.x-b.x==1)||(b.x-a.x==1)){
         if(b.y>a.y)
             LCD_VLine(LCD_MakePoint(a.x, a.y), b.y - a.y+1, color);
         else
             LCD_VLine(LCD_MakePoint(a.x, b.y), a.y - b.y+1, color);
         return;
-    }*/
+    }
     color |= 0xFF000000ul;
     BSP_LCD_SetTextColor(color);
     BSP_LCD_DrawLine(a.x, a.y, b.x, b.y);

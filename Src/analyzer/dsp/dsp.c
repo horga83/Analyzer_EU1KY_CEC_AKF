@@ -73,6 +73,52 @@ static float _nonz(float f)
     return f;
 }
 
+
+//Goertzel_2
+
+float sine, cosine, selstartGoertzel=0;
+
+void startGoertzel(void){
+    int m=107;//10031*(NSAMPLES)/48000+.5;
+    sine = sin((2.0 * M_PI * (float) m) / (float) (NSAMPLES));
+    cosine = cos((2.0 * M_PI * (float) m) / (float) (NSAMPLES));
+}
+
+float goertzel(int NumSamples, float* data) //, float* realresult, float* imagresult)
+{
+    int     k,i;
+    float   q0,q1,q2,magnitude,real,imag;
+
+    float   scalingFactor = NumSamples / 2.0;
+    if(selstartGoertzel==0){
+        startGoertzel();
+    }
+
+    q0=0;
+    q1=0;
+    q2=0;
+
+    for(i=0; i<NumSamples; i++)
+    {
+        q0 = 2.0 * cosine * q1 - q2 + data[i];
+        q2 = q1;
+        q1 = q0;
+    }
+
+    // calculate the real and imaginary results
+    // scaling appropriately
+    real = (q1 * cosine - q2) / scalingFactor;
+    imag = (q1 * sine) / scalingFactor;
+
+    magnitude = sqrtf(real*real + imag*imag);
+    //realresult=real;
+    //*imagresult=imag;
+    //phase = atan(imag/real)
+    return magnitude;
+}
+
+
+
 static float complex DSP_FFT(int channel)
 {
     float magnitude, phase;
@@ -217,7 +263,7 @@ void DSP_Sample(void)
     }
 }
 
-void DSP_Sample16(void)
+void DSP_Sample64(void)
 {
     extern SAI_HandleTypeDef haudio_in_sai;
     HAL_StatusTypeDef res = HAL_SAI_Receive(&haudio_in_sai, (uint8_t*)audioBuf, (2 + 62) * 2, HAL_MAX_DELAY);
@@ -475,95 +521,49 @@ void DSP_MeasureTrack(uint32_t freqHz, int applyErrCorr, int applyOSL, int nMeas
     int i;
     int retries = 3;
 
-    //assert_param(nMeasurements > 0);
-    //if (nMeasurements > MAXNMEAS)
-    //    nMeasurements = MAXNMEAS;
 
-/*
-    if (freqHz == 0)
-    {
-        freqHz = GEN_GetLastFreq();
+    if (freqHz < BAND_FMIN || freqHz > CFG_GetParam(CFG_PARAM_BAND_FMAX))
+    { // Set defaults for out of band measurements
+        magmv_v = 500.f;
+        magmv_i = 500.f;
+        phdifdeg = 0.f;
+        magdifdb = 0.f;
+        mZ = 50.0f + 0.0fi;
+        return;
     }
-    else
-    {
-*/
-        if (freqHz < BAND_FMIN || freqHz > CFG_GetParam(CFG_PARAM_BAND_FMAX))
-        { // Set defaults for out of band measurements
-            magmv_v = 500.f;
-            magmv_i = 500.f;
-            phdifdeg = 0.f;
-            magdifdb = 0.f;
-            mZ = 50.0f + 0.0fi;
-            return;
-        }
-        GEN_SetTXFreq(freqHz);
-    //}
+    GEN_SetTXFreq(freqHz);
+
     //Init
     memset(audioBuf, 0, sizeof(audioBuf));
 
-    for (i = 0; i < nMeasurements; i++)
+    for (i = 0; i <= nMeasurements; i++)
     {
 
         DSP_Sample(); //TILE:4.7Sec
         res_i = DSP_FFT(0); //Input //TILE:0.3Sec
-        //res_v = DSP_FFT(1); //Output
 
-        mag_v_buf[i] = crealf(res_v);
+       // mag_v_buf[i] = crealf(res_v);
         mag_i_buf[i] = crealf(res_i);
-        //pdif = cimagf(res_i) - cimagf(res_v);
-        //Correct phase difference quadrant
-        //pdif = fmodf(pdif + M_PI, 2 * M_PI) - M_PI;
 
-        /*
-        if (pdif < -M_PI)
-            pdif += 2 * M_PI;
-        else if (pdif > M_PI)
-            pdif -= 2 * M_PI;
-
-        phdif_buf[i] = pdif;
-        */
     }
 
     //Now perform filtering to remove outliers with sigma > 1.0
-    //mag_v = DSP_FilterArray(mag_v_buf, nMeasurements, retries);
     mag_i = DSP_FilterArray(mag_i_buf, nMeasurements, retries);
-
-/*
-    if (applyErrCorr)
-    {
-        OSL_CorrectTX(freqHz, &mag_i);
-    }
-*/
-    //phdif = DSP_FilterArray(phdif_buf, nMeasurements, retries);
-    /*
-    if (mag_v == 0.0f || mag_i == 0.0f || phdif == 0.0f)
-    {//need to measure again : too much noise detected
-        retries--;
-        goto REMEASURE;
-    }
-    */
 
     magmv_i = mag_i * MCF;
 }
 
 float DSP_MeasuredTrackValue(void)
 {
-    /*
-    uint8_t attvalue = VOLUME_IN_CONVERT(100 - CFG_GetParam(CFG_PARAM_LIN_ATTENUATION));
-    float dbatt = (239 - attvalue) * 0.375f;
-    float fatt = powf(10.f, dbatt / 20);
-    return magmv_i * fatt;
-    */
 
-    //return DSP_MeasuredMagImv() * 3;    //Input MiliVolt
-    //return (20 * log10f(DSP_MeasuredMagImv()) ) * 4;
-    return DSP_MeasuredMagImv();
+    return magmv_i;
+    //return DSP_MeasuredMagImv();
 }
 
 float DSP_MeasureTrackCal(void)
 {
-    //return magmv_i;
-    return DSP_MeasuredMagImv();
+    return magmv_i;
+    //return DSP_MeasuredMagImv();
 }
 
 //extern float complex OSL_CorrectZ_LC(uint32_t fhz, float complex zMeasured);

@@ -55,6 +55,9 @@
 #define RED1 LCD_RGB(245,0,0)
 #define RED2 LCD_RGB(235,0,0)
 
+static void save_snapshot(void);
+
+static int redrawRequired, exitScan;
 
 static const char *modstr = "CEC v." AAVERSION_CECV " ";
 
@@ -67,18 +70,16 @@ extern const uint32_t BSVALUES[];
 #define BSSTR_TRACK_HALF  BSSTR_HALF
 #define BSVALUES_TRACK    BSVALUES
 
-static char autoMeasureSpeed = 0;
+static char autoMeasureSpeed = 1;
 static uint32_t f1 = 14000000;      //Scan range start frequency, in Hz
-static BANDSPAN span = BS400;
+static BANDSPAN span21 = BS400;
 static float fcur;                  // frequency at cursor position in kHz
 //static char buf[64];
-static LCDPoint pt;
+static LCDPoint pt0;
 float *valuesmI;
 float *valuesdBI;
 
-//static float displayRate = 2.9;   //Display Zoom
-//static float displayOffset = 190; //Display Top Offset
-#define displayRate (float)2.9         //Display Zoom
+#define displayRate 2.9f         //Display Zoom
 #define displayOffset 190
 //static char DisplayType = 0;      //values or valuesmI
 static int isMeasured = 0;
@@ -86,22 +87,30 @@ static uint32_t cursorPos = WWIDTH / 2;
 
 static uint32_t cursorChangeCount = 0;
 static uint32_t autofast = 0;
-extern uint8_t NotSleepMode;
-
 static void Track_DrawRX();
 static int trackbeep;
+static char tmpBuff[20];
+
+static uint32_t activeLayerS21;
+static int cursorVisibleS21;
+static int firstRun;
 
 //=====================================================================
 //Menu
 //---------------------------------------------------------------------
 #define S21_BOTTOM_MENU_TOP 243
-#define trackMenu_Length 6
-static const int trackMenus[trackMenu_Length][4] = {{0, S21_BOTTOM_MENU_TOP, 79, 271},    //HOME BUTTON
-    {81, S21_BOTTOM_MENU_TOP, 164, 271}, //SCAN
-    {165, S21_BOTTOM_MENU_TOP, 216, 271}, //ZOOM OUT
-    {217, S21_BOTTOM_MENU_TOP, 268, 271}, //ZOOM IN
-    {269, S21_BOTTOM_MENU_TOP, 352, 271}, //FREQ
-    {353, S21_BOTTOM_MENU_TOP, 435, 271}, //CAPTURE
+#define trackMenu_Length 11
+static const int trackMenus[trackMenu_Length][4] = {{0, S21_BOTTOM_MENU_TOP, 79, 271},    //HOME BUTTON (0)
+    {81, S21_BOTTOM_MENU_TOP, 164, 271}, //SCAN (1)
+    {165, S21_BOTTOM_MENU_TOP, 216, 271}, //ZOOM OUT (2)
+    {217, S21_BOTTOM_MENU_TOP, 268, 271}, //ZOOM IN (3)
+    {269, S21_BOTTOM_MENU_TOP, 352, 271}, //FREQ (4)
+    {40, 0, 479, 80},                     //FREQ (5)
+    {353, S21_BOTTOM_MENU_TOP, 435, 271}, //CAPTURE (6)
+    {40, 210, 450, 235}, //SetCursor DH1AKF (7)
+    {430, 240, 479, 271}, //Auto (8)
+    {0, 90, 50, 170}, //    < (9)
+    {430, 90, 479, 170}, //   > (10)
 };
 
 void TRACK_Beep(int duration)
@@ -128,9 +137,9 @@ static void DrawAutoText(void)
 {
     static const char* atxt = "  Auto  ";
     if (0 == autofast)
-        FONT_Print(FONT_FRAN, TextColor, BackGrColor, 437, trackMenus[5][BUTTON_TOP] + 5,  atxt);
+        FONT_Print(FONT_FRAN, TextColor, BackGrColor, 435, trackMenus[8][BUTTON_TOP] + 10,  atxt);
     else
-        FONT_Print(FONT_FRAN, TextColor, LCD_MakeRGB(0, 128, 0), 437, trackMenus[5][BUTTON_TOP] + 5,  atxt);
+        FONT_Print(FONT_FRAN, TextColor, LCD_MakeRGB(0, 128, 0), 435, trackMenus[8][BUTTON_TOP] + 10,  atxt);//green background
 }
 
 
@@ -141,56 +150,56 @@ static void TRACK_DrawFootText(void){
     LCD_DrawBitmap(LCD_MakePoint(trackMenus[2][BUTTON_LEFT], trackMenus[2][BUTTON_TOP]), imgbtn_zoomout, imgbtn_zoomout_size);
     LCD_DrawBitmap(LCD_MakePoint(trackMenus[3][BUTTON_LEFT], trackMenus[3][BUTTON_TOP]), imgbtn_zoomin, imgbtn_zoomin_size);
     LCD_DrawBitmap(LCD_MakePoint(trackMenus[4][BUTTON_LEFT], trackMenus[4][BUTTON_TOP]), imgbtn_freq, imgbtn_freq_size);
-    LCD_DrawBitmap(LCD_MakePoint(trackMenus[5][BUTTON_LEFT], trackMenus[5][BUTTON_TOP]), imgbtn_capture, imgbtn_capture_size);
+    LCD_DrawBitmap(LCD_MakePoint(trackMenus[6][BUTTON_LEFT], trackMenus[6][BUTTON_TOP]), imgbtn_capture, imgbtn_capture_size);
 
     DrawAutoText();
+    //Sleep(100);
 }
 
+static void DrawMeasuredValues(void){
 
-static void WK_InvertPixel(LCDPoint p){
-LCDColor    c;
-    c=LCD_ReadPixel(p);
-    switch (c){
-    case LCD_COLOR_YELLOW:
-        {
-            LCD_SetPixel(p,LCD_COLOR_RED);
-            return;
-        }
-    case LCD_COLOR_WHITE:
-        {
-            LCD_SetPixel(p,RED1);
-            return;
-        }
-    case LCD_COLOR_DARKGRAY:
-        {
-            LCD_SetPixel(p,RED2);
-            return;
-        }
-    case LCD_COLOR_RED:
-        {
-            LCD_SetPixel(p,LCD_COLOR_YELLOW);
-            return;
-        }
-    case RED1:
-        {
-            LCD_SetPixel(p,LCD_COLOR_WHITE);
-            return;
-        }
-    case RED2:
-        {
-            LCD_SetPixel(p,LCD_COLOR_DARKGRAY);
-            return;
-        }
-    default:LCD_InvertPixel(p);
-    }
+
+float voltage1 = powf(10.f, -valuesmI[cursorPos]);
+    if(voltage1>20.0f) voltage1 = 20.0f;
+int dispPix = valuesdBI[cursorPos]; // display value (y offset)
+float DispdB= (float)dispPix * 0.3421f  ;//  0.3421 = 65/190
+int dB = CFG_GetParam(CFG_PARAM_ATTENUATOR);
+uint32_t fstart;// in Hz
+uint32_t fCursor;// in Hz
+
+    if (CFG_GetParam(CFG_PARAM_PAN_CENTER_F) == 0)
+        fstart = f1;
+    else
+        fstart = f1 - 500*BSVALUES_TRACK[span21];
+
+    fCursor =  fstart + (uint32_t)((cursorPos * BSVALUES_TRACK[span21]*1000.f )/ WWIDTH);
+
+    if (fCursor  > CFG_GetParam(CFG_PARAM_BAND_FMAX))
+        fCursor = CFG_GetParam(CFG_PARAM_BAND_FMAX);
+    LCD_FillRect(LCD_MakePoint(0, 228),LCD_MakePoint(479 , 240),BackGrColor);
+
+    FONT_Print(FONT_FRAN, TextColor, BackGrColor, 0, 225, "F: %8.2f MHz dB: %4.1f V: %5.3f mV ",
+               (float)(fCursor/ 1000000.f), DispdB, voltage1);
+
+
+//int idx = GetIndexForFreq(fCursor);// ============== TEST to show Corr values ====================
+//float Corr0dB=-osl_txCorr[idx].mag0;     // Corr value 0 dB
+//float CorrAtt=-osl_txCorr[idx].phase0;   //Corr value xx dB
+
+
+ //   FONT_Print(FONT_FRAN, TextColor, BackGrColor, 250, 225, "A0: %.3e A30: %.3e",
+ //               Corr0dB, CorrAtt);
 }
 
-static void DrawCursor()
+//extern void WK_InvertPixel(uint16_t x, uint16_t y);
+static void DrawCursorS()
 {
     int8_t i;
     LCDPoint p;
     if (!isMeasured)
         return;
+    if(cursorVisibleS21==0) cursorVisibleS21=1;
+    else cursorVisibleS21=0;
 
     //Draw cursor line as inverted image
     p = LCD_MakePoint(X0 + cursorPos, Y0);
@@ -198,7 +207,7 @@ static void DrawCursor()
     if(ColourSelection==1){// Daylightcolours
         while (p.y < Y0 + WHEIGHT){
            if((p.y % 20)<10)
-                WK_InvertPixel(p);
+                WK_InvertPixel(p.x,p.y);
            else LCD_InvertPixel(p);
            p.y++;
 
@@ -229,11 +238,30 @@ static void DrawCursor()
         p.x--;
     }
 
-    LCD_FillRect((LCDPoint){X0 + cursorPos-3,Y0+WHEIGHT+1},(LCDPoint){X0 + cursorPos+3,Y0+WHEIGHT+3},BackGrColor);
-    LCD_FillRect((LCDPoint){X0 + cursorPos-2,Y0+WHEIGHT+1},(LCDPoint){X0 + cursorPos+2,Y0+WHEIGHT+3},TextColor);
+    LCD_FillRect((LCDPoint){X0 + cursorPos-3,Y0+WHEIGHT+2},(LCDPoint){X0 + cursorPos+3,Y0+WHEIGHT+4},BackGrColor);
+    LCD_FillRect((LCDPoint){X0 + cursorPos-2,Y0+WHEIGHT+2},(LCDPoint){X0 + cursorPos+2,Y0+WHEIGHT+4},TextColor);
 
-    Sleep(5);
+    Sleep(1);
 }
+
+static void DrawCursorS21(){
+int visible = cursorVisibleS21;
+
+    DrawCursorS();
+    if(BSP_LCD_GetActiveLayer()!=activeLayerS21){
+        BSP_LCD_SelectLayer(activeLayerS21);
+        cursorVisibleS21=visible;
+        DrawCursorS();
+        BSP_LCD_SelectLayer((1+activeLayerS21)%2);
+    }
+    else{
+        BSP_LCD_SelectLayer((1+activeLayerS21)%2);
+        cursorVisibleS21=visible;
+        DrawCursorS();
+        BSP_LCD_SelectLayer(activeLayerS21);
+    }
+}
+
 
 static void MoveCursor(int moveDirection)
 {
@@ -250,98 +278,78 @@ static void MoveCursor(int moveDirection)
         if (cursorPos <= 0)
             return;
     }
-
-    DrawCursor();
+    if (cursorVisibleS21==1)
+        DrawCursorS21();        // delete the old cursor
     cursorPos += moveDirection;
-    DrawCursor();
-    //DrawCursorText();
+    DrawCursorS21();
+    cursorVisibleS21=1;
+    //LCD_HLine(LCD_MakePoint(40,226), 400, CurvColor);
+    //LCD_HLine(LCD_MakePoint(40,239), 400, CurvColor);//green line
 
-
-    float rx = valuesmI[cursorPos];
-    float dispDB = valuesdBI[cursorPos];
-
-    uint32_t fstart;
-    if (CFG_GetParam(CFG_PARAM_PAN_CENTER_F) == 0)
-        fstart = f1;
-    else
-        fstart = f1 - 500*BSVALUES_TRACK[span];
-
-    fcur = ((float)(fstart/1000. + (float)cursorPos * BSVALUES_TRACK[span] / WWIDTH));///1000.;
-    if (fcur * 1000.f > (float)(CFG_GetParam(CFG_PARAM_BAND_FMAX) + 1))
-        fcur = 0.f;
-
-    LCD_FillRect(LCD_MakePoint(40, 227),LCD_MakePoint(479 , 239),BackGrColor);
-    FONT_Print(FONT_FRAN, TextColor, BackGrColor, 60, Y0 + WHEIGHT + 16, "F:%10.5fMhz    dB:%8.3f    Measured: %5.3fmV",
-               fcur / 1000,
-               dispDB,
-               rx);
-    LCD_HLine(LCD_MakePoint(40,226), 400, CurvColor);
-    LCD_HLine(LCD_MakePoint(40,239), 400, CurvColor);
-
-    if (cursorChangeCount++ < 10)
-        Sleep(100); //Slow down at first steps
-    Sleep(5);
+    if (cursorChangeCount++ < 5){
+        DrawMeasuredValues();//DH1AKF  25.10.2020
+        Sleep(20); //Slow down at first steps
+    }
+    Sleep(2);
 }
+#define linediv 10
 
 static void Track_DrawGrid(int justGraphDraw)  //
 {
     char buf[30];
     int i;
-    int verticalPos = 12;
+    int verticalPos = 13;
     uint32_t fstart;
     uint32_t pos = 130;
 
-    #define VerticalStep 29.3
+    #define VerticalStep 29.23
     #define VerticalX 10
 
     if (0 == CFG_GetParam(CFG_PARAM_PAN_CENTER_F))
     {
         fstart = f1;
-        sprintf(buf, " graph: %.3f MHz +%s", (float)f1/1000000, BSSTR_TRACK[span]);
+        sprintf(buf, " graph: %.3f MHz +%s", (float)f1/1000000, BSSTR_TRACK[span21]);
     }
 
     else {
-        fstart = f1 - 500*BSVALUES_TRACK[span];
-        sprintf(buf, " graph: %.3f MHz +/- %s", (float)f1/1000000, BSSTR_TRACK_HALF[span]);
+        fstart = f1 - 500*BSVALUES_TRACK[span21];
+        sprintf(buf, " graph: %.3f MHz +/- %s", (float)f1/1000000, BSSTR_TRACK_HALF[span21]);
     }
-
-
-    if (justGraphDraw)
+    LCD_FillRect(LCD_MakePoint(40, 15), LCD_MakePoint(459 , 225), BackGrColor);
+    cursorVisibleS21=0;
+    if (justGraphDraw%1==0)
     {
-        LCD_FillRect(LCD_MakePoint(40, 15), LCD_MakePoint(459 , 225), BackGrColor);
-    }
-    else
-    {
-        LCD_FillAll(BackGrColor);
-
         //Vertical Numbers
         FONT_Write(FONT_FRAN, CurvColor, BackGrColor, VerticalX, verticalPos, " 0dB");
-        verticalPos += VerticalStep;
-        FONT_Write(FONT_FRAN, CurvColor, BackGrColor, VerticalX, verticalPos, "-10");
-        verticalPos += VerticalStep;
-        FONT_Write(FONT_FRAN, CurvColor, BackGrColor, VerticalX, verticalPos, "-20");
-        verticalPos += VerticalStep;
-        FONT_Write(FONT_FRAN, CurvColor, BackGrColor, VerticalX, verticalPos, "-30");
-        verticalPos += VerticalStep;
-        FONT_Write(FONT_FRAN, CurvColor, BackGrColor, VerticalX, verticalPos, "-40");
-        verticalPos += VerticalStep;
-        FONT_Write(FONT_FRAN, CurvColor, BackGrColor, VerticalX, verticalPos, "-50");
-        verticalPos += VerticalStep;
-        FONT_Write(FONT_FRAN, CurvColor, BackGrColor, VerticalX, verticalPos, "-60");
-        //verticalPos += VerticalStep;
-        //FONT_Write(FONT_FRAN, CurvColor, BackGrColor, VerticalX, verticalPos, "-70");
 
-        FONT_Write(FONT_FRAN, LCD_BLACK, LCD_PURPLE, 50, 0, modstr);
+        for(i=-10;i>=-60;i=i-10){
+            verticalPos += VerticalStep;
+            LCD_HLine(LCD_MakePoint(X0 -5 , verticalPos+6), 5, WGRIDCOLOR);
+            FONT_Print(FONT_FRAN, CurvColor, BackGrColor, VerticalX, verticalPos, "%d", i); // - xx
+        }
+
+        //FONT_Write(FONT_FRAN, LCD_BLACK, LCD_PURPLE, 50, 0, modstr);
         FONT_Write(FONT_FRANBIG, TextColor, 0, 2, 107, "<");
         FONT_Write(FONT_FRANBIG, TextColor, 0, 460, 107, ">");
 
-        FONT_Write(FONT_FRAN, CurvColor, BackGrColor, 200, 0, "VNA |S21|Gain");
+        FONT_Write(FONT_FRAN, CurvColor, BackGrColor, 200, 0, "SNA |S21|Gain");
         FONT_Write(FONT_FRAN, TextColor, BackGrColor, 320, 0, buf);//LCD_BLUE
+
     }
 
     //Draw F grid and labels
     int lmod = 5;
-    int linediv = 10; //Draw vertical line every linediv pixels
+     //Draw vertical line every linediv pixels
+
+    //Mark ham bands with colored background DH1AKF
+    for (i = 0; i <= WWIDTH; i++)
+    {
+        uint32_t f = fstart/1000 + (i * BSVALUES[span21]) / WWIDTH;
+        if (IsFinHamBands(f))
+        {
+            LCD_VLine(LCD_MakePoint(X0 + i, Y0), WHEIGHT+1, LCD_COLOR_BLUE);// (0, 0, 64) darkblue << >> yellow
+        }
+    }
 
     for (i = 0; i <= WWIDTH/linediv; i++)
     {
@@ -349,35 +357,35 @@ static void Track_DrawGrid(int justGraphDraw)  //
         if ((i % lmod) == 0 || i == WWIDTH/linediv)
         {
             //char fr[10];
-            float flabel = ((float)(fstart/1000. + i * BSVALUES_TRACK[span] / (WWIDTH/linediv)))/1000.f;
+            float flabel = ((float)(fstart/1000. + i * BSVALUES_TRACK[span21] / (WWIDTH/linediv)))/1000.f;
             if (flabel * 1000000.f > (float)(CFG_GetParam(CFG_PARAM_BAND_FMAX)+1))
                 continue;
             if(flabel>999.99)
-                sprintf(buf, "%.1f", ((float)(fstart/1000. + i * BSVALUES_TRACK[span] / (WWIDTH/linediv)))/1000.f);
+                sprintf(buf, "%.1f", ((float)(fstart/1000. + i * BSVALUES_TRACK[span21] / (WWIDTH/linediv)))/1000.f);
             else if(flabel>99.99)
-                sprintf(buf, "%.2f", ((float)(fstart/1000. + i * BSVALUES_TRACK[span] / (WWIDTH/linediv)))/1000.f);
+                sprintf(buf, "%.2f", ((float)(fstart/1000. + i * BSVALUES_TRACK[span21] / (WWIDTH/linediv)))/1000.f);
             else
-                sprintf(buf, "%.3f", ((float)(fstart/1000. + i * BSVALUES_TRACK[span] / (WWIDTH/linediv)))/1000.f);// WK
+                sprintf(buf, "%.3f", ((float)(fstart/1000. + i * BSVALUES_TRACK[span21] / (WWIDTH/linediv)))/1000.f);// WK
             int w = FONT_GetStrPixelWidth(FONT_SDIGITS, buf);
            // FONT_Write(FONT_SDIGITS, LCD_WHITE, LCD_BLACK, x - w / 2, Y0 + WHEIGHT + 5, f);// WK
-            FONT_Write(FONT_FRAN, TextColor, BackGrColor, x -8 - w / 2, Y0 + WHEIGHT + 2, buf);
-            LCD_VLine(LCD_MakePoint(x, Y0), WHEIGHT, WGRIDCOLOR);
-            LCD_VLine(LCD_MakePoint(x+1, Y0), WHEIGHT, WGRIDCOLOR);// WK
+            FONT_Write(FONT_FRAN, TextColor, BackGrColor, x -8 - w / 2, Y0 + WHEIGHT + 3, buf);
+            LCD_VLine(LCD_MakePoint(x, Y0), WHEIGHT+1, WGRIDCOLOR);
+            LCD_VLine(LCD_MakePoint(x+1, Y0), WHEIGHT+1, WGRIDCOLOR);// WK
         }
         else
         {
-            LCD_VLine(LCD_MakePoint(x, Y0), WHEIGHT, WGRIDCOLOR);
+            LCD_VLine(LCD_MakePoint(x, Y0), WHEIGHT+1, WGRIDCOLOR);
         }
     }
-
+    if(justGraphDraw==2){
+        TRACK_DrawFootText();
+    }
     //LCD_FillRect((LCDPoint){X0 ,Y0+WHEIGHT+1},(LCDPoint){X0 + WWIDTH+2,Y0+WHEIGHT+3},BackGrColor);
 }
 
 static uint32_t Fs, Fp;// in Hz
 static float Cp, Rs;
 
-//extern void DSP_MeasureTrack(uint32_t freqHz, int applyErrCorr, int applyOSL, int nMeasurements);
-//extern float DSP_MeasuredTrackValue();
 
 static void Scan21(int selector)
 {
@@ -389,14 +397,14 @@ static void Scan21(int selector)
     if (CFG_GetParam(CFG_PARAM_PAN_CENTER_F) == 0)
         fstart = f1;
     else
-        fstart = f1 - 500*BSVALUES_TRACK[span]; // 2;
+        fstart = f1 - 500*BSVALUES_TRACK[span21]; // 2;
 
     freq1 = fstart - 150000;
     if (freq1 < 100000)
         freq1 = 100000;
 
     DSP_MeasureTrack(freq1, 1, 1, 1); //Fake initial run to let the circuit stabilize
-    inputMI = DSP_MeasuredTrackValue();
+   // inputMI = DSP_MeasuredTrackValue();
     Sleep(20);
 
     DSP_MeasureTrack(freq1, 1, 1, 1);
@@ -408,7 +416,7 @@ static void Scan21(int selector)
     if (selector == 1)
         return;
 
-    deltaF=(BSVALUES_TRACK[span] * 1000) / WWIDTH;
+    deltaF=(BSVALUES_TRACK[span21] * 1000) / WWIDTH;
     nScanCount = CFG_GetParam(CFG_PARAM_PAN_NSCANS);
 
     for(i = 0; i <= WWIDTH; i++)
@@ -417,18 +425,13 @@ static void Scan21(int selector)
         if (freq1 == 0) //To overcome special case in DSP_Measure, where 0 is valid value
             freq1 = 1;
         DSP_MeasureTrack(freq1, 1, 1, nScanCount);
-        inputMI = DSP_MeasuredTrackValue();
+        inputMI = -log10(DSP_MeasuredTrackValue());
 
         valuesmI[i] = inputMI;
-        valuesdBI[i] = freq1;   //OSL_TXTodB(freq1, inputMI);   //
+        valuesdBI[i] = OSL_Calc_dBPix(freq1, inputMI);
 
         LCD_SetPixel(LCD_MakePoint(X0 + i, 135), LCD_BLUE);// progress line
         LCD_SetPixel(LCD_MakePoint(X0 + i, 136), LCD_BLUE);
-    }
-
-    for(i = 0; i <= WWIDTH; i++)
-    {
-        valuesdBI[i] = OSL_TXTodB(valuesdBI[i], valuesmI[i]);
     }
 
     FONT_Write(FONT_FRAN, LCD_RED, LCD_BLACK, 420, 0, "     ");
@@ -647,201 +650,269 @@ static void Scan21(int selector)
 
 
 //Version 0.35
-static void Scan21Fast()
-{
-//#define FAST_DIVIDE_FREQ 12
-#define FAST_DIVIDE_FREQ autoMeasureSpeed
 
-    //float inputMI;
-    uint32_t i, nScanCount;
-    uint32_t fstart, freq1, deltaF;
+static uint32_t fstart, freq1;
 
-    f1=CFG_GetParam(CFG_PARAM_S21_F1);
+static void MakeFstart(void){
+ f1=CFG_GetParam(CFG_PARAM_S21_F1);
+ span21=CFG_GetParam(CFG_PARAM_S21_SPAN);
     if (CFG_GetParam(CFG_PARAM_PAN_CENTER_F) == 0)
         fstart = f1;
     else
-        fstart = f1 - 500*BSVALUES_TRACK[span]; // 2;
+        fstart = f1 - 500*BSVALUES_TRACK[span21]; // 2;
 
     freq1 = fstart - 150000;
     if (freq1 < 100000)
         freq1 = 100000;
+}
 
-    DSP_MeasureTrack(freq1, 1, 1, 1); //Fake initial run to let the circuit stabilize
-    //inputMI = DSP_MeasuredTrackValue();
-    //Sleep(20);
+static void RedrawWindowS21(int justGraphDraw);
+static LCDPoint    pt1;
+static int touchIndex;
+static uint32_t saveAutofast;
 
-    DSP_MeasureTrack(freq1, 1, 1, 1);
-    //inputMI = DSP_MeasuredTrackValue();
+void TrackTouchExecute(LCDPoint pt){
 
-    deltaF=(BSVALUES_TRACK[span] * 1000) / WWIDTH;
+    touchIndex = GetTouchIndex(pt, trackMenus, trackMenu_Length);
+    if(touchIndex <9){ // Beep
+        TRACK_Beep(1);
+        while(TOUCH_IsPressed());
+        Sleep(100);
+    }
+    if(touchIndex==8){
+    // Button Auto
+        if (autofast == 0)
+        {
+            autofast = 1;
+            //BSP_LCD_SelectLayer(activeLayerS21);
+            sprintf(tmpBuff, " AUTO SPEED : [%d] ", autoMeasureSpeed);
+            FONT_Write(FONT_FRAN, LCD_GREEN, LCD_BLACK, 60, 0, tmpBuff);
+            Track_DrawGrid(2);
+            //BSP_LCD_SelectLayer((1+activeLayerS21)%2);
+            //FONT_Write(FONT_FRAN, LCD_GREEN, LCD_BLACK, 65, 0, tmpBuff);
+            //TRACK_DrawFootText();
+            firstRun=1;
+            cursorChangeCount = 0;
+            LCD_FillRect(LCD_MakePoint(40, 15), LCD_MakePoint(459 , 225), BackGrColor);
+            Track_DrawGrid(1);
+            //BSP_LCD_SelectLayer(activeLayerS21);
+        }
+        else
+        {
+            autofast = 0;
+            FONT_Write(FONT_FRAN, LCD_GREEN, LCD_BLACK, 0, 0, "AA EU1KY-KD8CEC-DH1AKF   ");
+            TRACK_DrawFootText();
+            if(cursorVisibleS21==0)
+                DrawCursorS21();
+            cursorVisibleS21=1;
+        }
+       // TRACK_DrawFootText();
+        saveAutofast=autofast;
+        return;
+    }
+
+    saveAutofast=autofast;
+
+    switch(touchIndex){ // Exit
+        case 0:{
+            exitScan=1;
+            break;
+        }
+        case 9: { // < Button
+            if(autofast==0)
+                MoveCursor(-1);
+            break;
+        }
+        case 10:{          // > Button
+            if(autofast==0)
+                MoveCursor(1);
+            break;
+        }
+        case 1:{    //SCAN
+            if (autofast) break;
+
+            FONT_Write(FONT_FRANBIG, LCD_RED, LCD_BLACK, 180, 100, "  Scanning...  ");
+            redrawRequired = 1;
+            break;
+        }
+        case 2:{    //ZOOM OUT
+            //zoomMinus();
+            if(fcur!=0)
+                f1=fcur*1000.;
+            if(span21>0)
+                span21--;
+            redrawRequired = 1;
+            break;
+        }
+        case 3:{    //ZOOM IN
+            //zoomPlus();
+            if(fcur!=0)
+                f1=fcur*1000.;
+            if(span21<BS100M)
+                span21++;
+            redrawRequired = 1;
+            break;
+        }
+        case 4:     //Input Freq
+        case 5:{
+            touchIndex=4;
+            break;
+        }
+        case 6:{    //Capture
+            save_snapshot();
+            //Redraw
+            redrawRequired = 1;
+           // RedrawWindowS21(0);DrawCursorS
+            TRACK_DrawFootText();
+            DrawAutoText();
+            break;
+        }
+        case 7:{    // SetCursor
+            if(autofast!=0) break;
+            uint16_t cursorNew=pt.x;
+            if(pt.x<X0) cursorNew=X0;
+            if(pt.x>X0+WWIDTH) cursorNew=WWIDTH;
+            MoveCursor(cursorNew-cursorPos-X0);
+            break;
+        }//end of case
+    }// end of if..else
+}
+
+void SetMeasPointS21(uint32_t i, int yofsNew, int yofs){
+int lmod = 5;
+int k, length, pos =yofs, posNew = yofsNew;
+
+    if(i==WWIDTH)  firstRun=0;
+
+    if (pos > WHEIGHT+ Y0) pos = WHEIGHT +Y0;
+    else if (pos < Y0) pos = Y0;
+
+    if (posNew > WHEIGHT+ Y0) posNew = WHEIGHT +Y0;
+    else if (posNew < Y0) posNew = Y0;
+
+    LCDColor c = LCD_ReadPixel(LCD_MakePoint(i+X0, Y0 + 1));// take the colour from first gridline
+    LCD_SetPixel(LCD_MakePoint(i+X0, pos), c);// overwrite the old pixel(s)
+    if(FatLines){
+        LCD_SetPixel(LCD_MakePoint(i+X0, pos-1), c);// WK
+    }
+
+    if(i==cursorPos){
+        LCD_SetPixel(LCD_MakePoint(i+X0, posNew), LCD_COLOR_RED);// set the new pixel(s)
+        if(FatLines){
+            LCD_SetPixel(LCD_MakePoint(i+X0, posNew-1), LCD_COLOR_RED);// WK
+        }
+
+    }
+    else{
+        if(c==LCD_COLOR_BLUE) c=BackGrColor;
+        else c=CurvColor;
+        LCD_SetPixel(LCD_MakePoint(i+X0, posNew), c);// set the new pixel(s)
+        if(FatLines){
+            LCD_SetPixel(LCD_MakePoint(i+X0, posNew-1), c);// WK
+        }
+    }
+}
+
+static void Scan21Fast()
+{
+LCDPoint pt;
+uint32_t i, k, m, nScanCount;
+uint32_t deltaF, returni=0;
+int i0, i1, i2, yofs, yofsNew;
+float newValue;
+
+    deltaF=(BSVALUES_TRACK[span21] * 1000) / WWIDTH;
     nScanCount = CFG_GetParam(CFG_PARAM_PAN_NSCANS);
-
-
     for(i = 0; i <= WWIDTH; i++)
     {
         freq1 = fstart + i * deltaF;
-        //if (freq1 == 0) //To overcome special case in DSP_Measure, where 0 is valid value
-        //    freq1 = 1;
-
-        //valuesdBI[i] = freq1;   //OSL_TXTodB(freq1, inputMI);   //
-
-        if (i % FAST_DIVIDE_FREQ != 0)
-        {
-            continue;
+        k= i / autoMeasureSpeed;                    //  Break/Exit by Touch
+        if ((0 == (i % 80)) && TOUCH_Poll(&pt)){
+            returni=1;
+            break;
         }
 
-        DSP_MeasureTrack(freq1, 1, 1, nScanCount);
-        //inputMI = DSP_MeasuredTrackValue();
-
-        //OSL_CorrectTX(freq1, &inputMI);
-        valuesmI[i] = DSP_MeasuredTrackValue();
-        valuesdBI[i] = OSL_TXTodB(freq1, valuesmI[i]);
-
-
-        //Break by Touch
-        if (autofast)
+        if (i % autoMeasureSpeed == 0)
         {
-            if (TOUCH_Poll(&pt))
-            {
-                if (pt.y > 230 && pt.x > 450)
-                {
-                    autofast = 0;
-                    TRACK_Beep(0);
-                    TRACK_DrawFootText();
-                    //break;
+            DSP_MeasureTrack(freq1, 1, 1, nScanCount);
+            valuesmI[i] = -log10(DSP_MeasuredTrackValue());
+            newValue = OSL_Calc_dBPix(freq1, valuesmI[i]);////////
+            yofsNew = Y0 + newValue;
+            yofs=Y0+valuesdBI[i];
+            valuesdBI[i]=newValue;
+            if((yofs!=yofsNew)||(firstRun==1))
+                SetMeasPointS21(i, yofsNew, yofs);
+        }
+        if((i==WWIDTH)||(i % autoMeasureSpeed != 0)){
+            if(k>=1){
+                i0 = k * autoMeasureSpeed;
+                i2 = i0 - autoMeasureSpeed;
+                for (m= i2+1 ; m < i0; m++){
+                    //Interpolate previous intermediate values linear
+                    valuesmI[m] = valuesmI[i2] + (valuesmI[i0] - valuesmI[i2]) * (m-i2) / autoMeasureSpeed;
+                    newValue = valuesdBI[i2] + (valuesdBI[i0] - valuesdBI[i2]) * (m-i2) / autoMeasureSpeed;
+                    yofsNew = Y0 + newValue;
+                    yofs = Y0 + valuesdBI[m];
+                    valuesdBI[m]=newValue;
+                    if((yofs!=yofsNew)||(firstRun==1))
+                        SetMeasPointS21(m, yofsNew, yofs);
                 }
             }
         }
     }
-
-    //FONT_Write(FONT_FRAN, LCD_RED, LCD_BLACK, 420, 0, "     ");
-    GEN_SetMeasurementFreq(0);
+    if(returni==1) return;
     isMeasured = 1;
-
-    //Interpolate intermediate values
-    for(i = 1; i <= WWIDTH; i++)
-    {
-        //uint32_t fr = i % FAST_DIVIDE_FREQ;
-
-        if (0 == i % FAST_DIVIDE_FREQ)
-            continue;
-
-        int fi0, fi1, fi2;
-
-        fi0 = i / FAST_DIVIDE_FREQ;
-        fi2 = fi0 + 1;
-
-        fi0 *= FAST_DIVIDE_FREQ;
-        fi2 *= FAST_DIVIDE_FREQ;
-/*
-
-        float Yi = valuesdBI[fi0];
-        float Xi = fi0;
-        float Yi1 = valuesdBI[fi2];
-        float Xi1 = fi2;
-        float Xb = i;
-
-        float Yb = Yi + (Yi1 - Yi) * (Xb - Xi) / (Xi1 - Xi);
-        valuesdBI[i] = Yb;
-*/
-
-        valuesdBI[i] = valuesdBI[fi0] + (valuesdBI[fi2] - valuesdBI[fi0]) * (i - fi0) / (fi2 - fi0);
-        valuesmI[i] = valuesmI[fi0] + (valuesmI[fi2] - valuesmI[fi0]) * (i - fi0) / (fi2 - fi0);
-    }
 }
 
-static void Track_DrawRX(int SelQu, int SelEqu)// SelQu=1, if quartz measurement  SelEqu=1, if equal scales
+int lastoffset;
+
+static void Track_DrawCurve(void)// SelQu=1, if quartz measurement  SelEqu=1, if equal scales
 {
 #define LimitR 1999.f
     int i, imax;
-    int x, RXX0;
+    int x, yofs;
 
     if (!isMeasured)
         return;
+    Track_DrawGrid(1);
 
-    RXX0 = X0;
-
-    //Now draw R graph
-    int lastoffset = 0;
-
-    //Draw  labels
-    int yofs = 0;
-    int yofs_sm = 0;
-
-    //Now draw X graph
-    lastoffset = 0;
     for(i = 0; i <= WWIDTH; i++)
     {
-        x = RXX0 + i;
+        x = X0 + i;
 
-        yofs = valuesdBI[i] * displayRate + displayOffset;
+        yofs = valuesdBI[i] + Y0;
 
-        if (yofs > 193)
+        if (yofs > 208)
         {
-            yofs = 193;
+            yofs = 208;
         }
-        else if (yofs < 0)
+        else if (yofs < Y0)
         {
-            yofs = 0;
+            yofs = Y0;
         }
-
-        if(i == 0)
-        {
-            LCD_SetPixel(LCD_MakePoint(x, WY(yofs)), LCD_WHITE);//LCD_RGB(SM_INTENSITY, 0, 0
-        }
-        else
-        {
-            LCD_Line(LCD_MakePoint(x - 1, WY(lastoffset)), LCD_MakePoint(x, WY(yofs)), LCD_WHITE);
-            if(FatLines){
-                LCD_Line(LCD_MakePoint(x - 1, WY(lastoffset)+1), LCD_MakePoint(x, WY(yofs)+1), LCD_WHITE);// WK
-            }
-        }
-
-        lastoffset = yofs;
+        LCD_SetPixel(LCD_MakePoint(x, yofs), LCD_WHITE);
+        if(FatLines)
+            LCD_SetPixel(LCD_MakePoint(x , yofs+1), LCD_WHITE);// WK
     }
+    DrawCursorS21();
+    cursorVisibleS21=1;
 }
 
-int nowLayerIndex = 0;
-static void RedrawWindow(int justGraphDraw)
+static void RedrawWindowS21(int justGraphDraw)
 {
     Track_DrawGrid(justGraphDraw);
-    Track_DrawRX(0, 0);// 1
-    DrawCursor();
-
+    Track_DrawCurve();// 1
 
     if (! justGraphDraw)
     {
         TRACK_DrawFootText();
     }
-
+    DrawMeasuredValues();
     DrawAutoText();
 }
 
-
  #define XX0 190
  #define YY0 42
-
-int TRACK_TouchTest(){
-
-     if (TOUCH_Poll(&pt)){
-        if((pt.y <80)&&(pt.x >380)){
-            // Upper right corner --> EXIT
-            TRACK_Beep(1);
-            while(TOUCH_IsPressed());
-            Sleep(100);
-            return 99;
-        }
-        if(pt.x<(XX0-8)){// select the pressed field:
-            TRACK_Beep(1);
-            if(pt.y<YY0+48) return 0;
-            if(pt.y<YY0+96) return 1;
-            if(pt.y<YY0+144) return 2;
-            if(pt.y<YY0+192) return 3;
-            return 4;
-        }
-     }
-     return -1;
- }
 
 static void save_snapshot(void)
 {
@@ -881,22 +952,28 @@ CRASH_WR:
 //=====================================================================
 //TRACK PROC
 //---------------------------------------------------------------------
+
 void Track_Proc(void)
 {
-    int redrawRequired = 0;
-    uint32_t activeLayer;
-    uint32_t FreqkHz;
 
+uint32_t fxkHzs;//Scan range start frequency, in kHz
+uint32_t fxs;
+extern int OSL_ENTRIES;
+
+    redrawRequired = exitScan = 0;
     //allocated memory
     valuesmI = (float *)malloc(sizeof(float) * (WWIDTH + 20));
     valuesdBI = (float *)malloc(sizeof(float) * (WWIDTH + 20));
-
+    activeLayerS21=1;
+    BSP_LCD_SelectLayer(activeLayerS21);
+    LCD_ShowActiveLayerOnly();
+    cursorVisibleS21=0;// in the beginning not visible
     SetColours();
     LCD_FillAll(BackGrColor);
-    FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 170, 100, "VNA |S21|Gain");
+    FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 170, 100, " |S21|Gain");
     Sleep(1000);
     while(TOUCH_IsPressed());
-
+    autofast=0;
     //Load Calibration
     if (! OSL_IsTXCorrLoaded())
     {
@@ -905,7 +982,6 @@ void Track_Proc(void)
     DBG_Str("Load VNA Calibration File \r\n");
 #endif
     }
-
 
     //LoadBkups();
     //Load saved frequency and span values from config file
@@ -918,199 +994,89 @@ void Track_Proc(void)
         f1 = fbkup;
     }
     else
-    {
         f1 = 14000000;
-        CFG_SetParam(CFG_PARAM_S21_F1, f1);
-        CFG_SetParam(CFG_PARAM_S21_SPAN, BS400);
-        CFG_Flush();
-    }
+    CFG_SetParam(CFG_PARAM_S21_F1, f1);
+    CFG_Flush();
 
-    int spbkup = CFG_GetParam(CFG_PARAM_S21_SPAN);
-    span = (BANDSPAN)spbkup;
+    MakeFstart();
+    span21 = CFG_GetParam(CFG_PARAM_S21_SPAN);
     autoMeasureSpeed = CFG_GetParam(CFG_PARAM_S21_AUTOSPEED);
-
-
-    FreqkHz = f1 / 1000;
 
     Track_DrawGrid(0);
     TRACK_DrawFootText();
     DrawAutoText();
-
-    //FONT_Write(FONT_FRAN, LCD_PURPLE, LCD_BLACK, 160,  20, "(Tap here to set F and Span)");
-
+    while(!TOUCH_IsPressed());
+    saveAutofast=1;
+    BSP_LCD_SelectLayer(activeLayerS21);
+    LCD_FillAll(BackGrColor);
+    BSP_LCD_SelectLayer((1+activeLayerS21)%2);
+    LCD_FillAll(BackGrColor);
+    Track_DrawGrid(0);
+    BSP_LCD_SelectLayer(activeLayerS21);
+    exitScan=0;
     for(;;)
     {
-        //
-
-        //Auto Scan Call
-        if (autofast)
-        {
-            Scan21Fast();
-            RedrawWindow(1);
-            redrawRequired = 0;
-        }
-        else
-        {
-            Sleep(5);
-        }
-
-        if (TOUCH_Poll(&pt))
-        {
-            int touchIndex = GetTouchIndex(pt, trackMenus, trackMenu_Length);
-
-            //Play Beep
-            if (touchIndex != -1)
-            {
-                TRACK_Beep(1);
-                while(TOUCH_IsPressed());
-            }
-
-
-            if (touchIndex == 0)    //EXIT
-            {
-                autofast = 0;
-                break;// Exit
-            }
-            else if (touchIndex == 1)    //SCAN
-            {
-                if (autofast)
-                {
-                    autofast = 0;
-                }
-
-                FONT_Write(FONT_FRANBIG, LCD_RED, LCD_BLACK, 180, 100, "  Scanning...  ");
-                Scan21(0);
-                redrawRequired = 1;
-            }
-            else if (touchIndex == 2)    //ZOOM OUT
-            {
-                    //zoomMinus();
-                    if(fcur!=0)
-                        f1=fcur*1000.;
-                    if(span>0)
-                        span--;
-                    if(0 == autofast)
-                        Scan21(0);
-                    redrawRequired = 1;
-            }
-            else if (touchIndex == 3)    //ZOOM IN
-            {
-                    //zoomPlus();
-                    if(fcur!=0)
-                        f1=fcur*1000.;
-                    if(span<BS100M)
-                        span++;
-                    if(0 == autofast)
-                        Scan21(0);
-                    redrawRequired = 1;
-            }
-            else if (touchIndex == 4 || (pt.y < 80)&&(pt.x>60))    //Input Freq
-            {
-
-                uint32_t fxkHzs;//Scan range start frequency, in kHz
-                uint32_t fxs = CFG_GetParam(CFG_PARAM_S21_F1);
-                fxkHzs = fxs/1000;
-                //span=BS400;
-                if (PanFreqWindow(&fxkHzs, (BANDSPAN*)&span))
-                {
-                    f1 = fxkHzs * 1000;
-
-                    CFG_SetParam(CFG_PARAM_S21_F1, f1);
-
-                    isMeasured = 0;
-
-                    //BSP_LCD_SelectLayer(activeLayer);
-                    RedrawWindow(0);
-
-                    CFG_SetParam(CFG_PARAM_S21_SPAN, span);
-                    CFG_Flush();
-                }
-
-
-            }
-            else if (touchIndex == 5)    //Capture
-            {
-                save_snapshot();
-
-                //Redraw
-                RedrawWindow(0);
-                TRACK_DrawFootText();
-                DrawAutoText();
-            }
-            else if (pt.y > 90 && pt.y <= 170)
-            {
-                //< Button
-                if (pt.x < 50)
-                {
-                    TRACK_Beep(0);
-                    MoveCursor(-1);
-                    continue;
-                }
-                else if (pt.x > 430)
-                {
-                    // > Button
-                    TRACK_Beep(0);
-                    MoveCursor(1);
-                    continue;
-                }
-            }
-            else if (pt.y > 250)
-            {
-                if (pt.x > 435)
-                {
-                    if (autofast == 0)
-                    {
-                        autofast = 1;
-                    }
-                    else
-                    {
-                        autofast = 0;
-                    }
-
-                    TRACK_Beep(0);
-                    redrawRequired = 1;
-                    TRACK_DrawFootText();
-                }
-
-            }   //end of if
-
-            if(redrawRequired)
-            {
-                //BSP_LCD_SelectLayer(!activeLayer);
-                //RedrawWindow(0);
-                //BSP_LCD_SelectLayer(activeLayer);
-                RedrawWindow(0);
-                redrawRequired = 0;
-
-                if (autofast)
-                {
-                    char tmpBuff[16];
-                    sprintf(tmpBuff, "AUTO SPEED : [%d] ", autoMeasureSpeed);
-                    FONT_Write(FONT_FRAN, LCD_BLACK, LCD_RED, 50, 0, tmpBuff);
-                }
-            }
-
-            while(TOUCH_IsPressed())
-            {
-                Sleep(250);
-            }
-
-            //LCD_ShowActiveLayerOnly();
-
+        Sleep(0);
+        if (TOUCH_Poll(&pt0)){// touch check
+            TrackTouchExecute(pt0);
+            if (exitScan==1) break;
+            autofast=saveAutofast;
         }
         else
         {
             cursorChangeCount = 0;
             trackbeep=0;
-        }   //end of touch check
+        }   //end of
+        if(touchIndex==4)// new frequency
+        {
+            fxs = CFG_GetParam(CFG_PARAM_S21_F1);
+            fxkHzs = fxs/1000;
+            if (PanFreqWindow(&fxkHzs, (BANDSPAN*)&span21))
+            {
+                f1 = fxkHzs * 1000;
+                CFG_SetParam(CFG_PARAM_S21_F1, f1);
+                CFG_SetParam(CFG_PARAM_S21_SPAN, span21);
+                CFG_Flush();
+                MakeFstart();// and span
+                isMeasured = 0;
+                Track_DrawGrid(2);
+                BSP_LCD_SelectLayer((1+activeLayerS21)%2);
+                Track_DrawGrid(2);
+                BSP_LCD_SelectLayer(activeLayerS21);
+                redrawRequired = 0;
+                firstRun=1;
+                cursorVisibleS21=0;
+                DrawCursorS21();
+            }
+            touchIndex=255;
+        }
 
-        //NotSleepMode = autofast;
-        //LCD_ShowActiveLayerOnly();
-    }   //end of while
-
-    NotSleepMode = 0;
+        if (autofast)                                   //Auto Scan
+        {
+           /* activeLayerS21=(1+activeLayerS21)%2;
+            BSP_LCD_SelectLayer(activeLayerS21);
+            BSP_LCD_SetLayerVisible_NoReload(activeLayerS21, 1);//  ?
+            BSP_LCD_SetLayerVisible((1+activeLayerS21)%2, 0);*/
+            Scan21Fast();
+            if(cursorVisibleS21==0)
+                DrawCursorS21();
+            cursorVisibleS21=1;
+            DrawMeasuredValues();
+           /* BSP_LCD_SetLayerVisible_NoReload(activeosl_txCorrLayerS21, 1);//  ?
+            BSP_LCD_SetLayerVisible((1+activeLayerS21)%2, 0);*/
+            redrawRequired = 0;
+        }
+        if(redrawRequired)
+        {
+            Scan21(0);
+            RedrawWindowS21(0);
+            redrawRequired = 0;
+        }
+        LCD_ShowActiveLayerOnly();
+    }   //end of for(;;)
+    GEN_SetClk2Freq(0);// CLK2 off
     //Release Memory
-    free(valuesmI);
     free(valuesdBI);
+    free(valuesmI);
     isMeasured = 0;
 }

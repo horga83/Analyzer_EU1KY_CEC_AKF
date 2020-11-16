@@ -206,7 +206,6 @@ const uint32_t BSVALUES[] = {2,4,10,20,40,100, 150, 200, 250, 300, 400, 500, 100
                              350000, 400000, 450000, 500000, 700000, 1000000\
                             };
 
-extern uint8_t NotSleepMode;
 static char autoMeasureSpeed = 0;
 static uint32_t f1 = 14000000; //Scan range start frequency, in Hz
 static BANDSPAN span = BS400;
@@ -231,7 +230,7 @@ static float complex *SavedValues3;
 static int isStored;
 
 static int isMeasured = 0;
-static uint32_t cursorPos = WWIDTH / 2;
+static uint32_t cursorPos;
 static GRAPHTYPE grType = GRAPH_VSWR;
 static uint32_t isSaved = 0;
 static uint32_t cursorChangeCount = 0;
@@ -449,10 +448,11 @@ int i, regnu, found=0;
     return -1;// not in a Ham band
 }
 
-static void WK_InvertPixel(LCDPoint p)
+void WK_InvertPixel(uint16_t x, uint16_t y)
 {
     LCDColor    c;
-    c=LCD_ReadPixel(p);
+    LCDPoint p= LCD_MakePoint(x,y);
+        c=LCD_ReadPixel(p);
     switch (c)
     {
     case LCD_COLOR_YELLOW:
@@ -517,7 +517,7 @@ static float S11Calc(float swr)
     return offs;
 }
 
-static int IsFinHamBands(uint32_t f_kHz)
+int IsFinHamBands(uint32_t f_kHz)
 {
     uint32_t i;
     switch(CFG_GetParam(CFG_PARAM_REGION))
@@ -599,7 +599,7 @@ static void DrawCursor1()
             while (p.y < Y0 + WHEIGHT)
             {
                 if((p.y % 20)<10)
-                    WK_InvertPixel(p);
+                    WK_InvertPixel(p.x,p.y);
                 else LCD_InvertPixel(p);
                 p.y++;
 
@@ -748,7 +748,7 @@ static void DecrCursor()
     if (cursorPos == 0)
         return;
     ManualCursor=1;
-    AutoCursor=0;
+    //AutoCursor=0;
     if (cursorVisible==1)
         DrawCursor();// delete the old cursor
     cursorPos--;
@@ -763,10 +763,10 @@ static void DecrCursor()
     {
         DrawCursorText();
     }
-    TEXTBOX_DrawContext(&SWR1);
+    //TEXTBOX_DrawContext(&SWR1);
     if (cursorChangeCount++ < 5)
         Sleep(100); //Slow down at first steps
-    Sleep(1);
+    Sleep(5);
 }
 
 static void IncrCursor()
@@ -776,7 +776,7 @@ static void IncrCursor()
     if (cursorPos >= WWIDTH)
         return;
     ManualCursor=1;
-    AutoCursor=0;
+    //AutoCursor=0;
     if (cursorVisible==1)
         DrawCursor();// delete the old cursor
     cursorPos++;
@@ -790,11 +790,11 @@ static void IncrCursor()
     {
         DrawCursorText();
     }
-    TEXTBOX_DrawContext(&SWR1);
+    //TEXTBOX_DrawContext(&SWR1);
     if (cursorChangeCount++ < 5)
         Sleep(100); //Slow down at first steps
 
-    Sleep(1);
+    Sleep(5);
 }
 
 static GRAPHTYPE grTypeOld;
@@ -984,7 +984,7 @@ static void ScanRXFast(void)
             rx = crealf(rx) + 0.0fi;
         values[i] = rx;
         LCDPoint pt;
-        if ((0 == (i % 32)) && TOUCH_Poll(&pt))
+        if ((0 == (i % 32)) && TOUCH_Poll(&pt))// break with a simple touch
             break;
     }
     GEN_SetMeasurementFreq(0);
@@ -1069,22 +1069,7 @@ static void ScanRX(int selector)
     int newDispTag = 0;
     for(i = 0; i <= WWIDTH; i++)
     {
-       /* if(i % 40 == 0)
-        {
-            //FONT_Write(FONT_FRAN, LCD_RED, LCD_BLACK, 450, 0, "TS");
-            //Sleep(50);
-            newDispTag = ! newDispTag;
-            if (newDispTag)
-            {
-                FONT_Write(FONT_FRAN, LCD_RED, LCD_BLACK, 450, 0, "TS");
-            }
-            else
-            {
-                FONT_Write(FONT_FRAN, LCD_RED, LCD_BLACK, 450, 0, "dP");
-            }
-        }*/
 
-        //Sleep(10);
         freq1 = fstart + i * deltaF;
         if (freq1 == 0) //To overcome special case in DSP_Measure, where 0 is valid value
             freq1 = 1;
@@ -1257,7 +1242,7 @@ static void DrawVSWR(void)
         lastoffset_sm = offset_sm;
     }
 
-   if((AutoCursor==1) && (ManualCursor==0)){
+   if((AutoCursor==2)||((AutoCursor==1) && (ManualCursor==0))){
 
         cursorPos=MinIndex;
     }
@@ -1487,7 +1472,7 @@ static void DrawS11()
         }
         lasty = y;
     }
-    if((AutoCursor==1) && (ManualCursor==0)){
+    if((AutoCursor==2)||((AutoCursor==1) && (ManualCursor==0))){
         cursorPos=MaxJ;
     }
     FONT_Write(FONT_FRAN, LCD_BLACK, LCD_COLOR_LIGHTGREEN, X0+1, 0, modstr);
@@ -1527,8 +1512,8 @@ void DrawX_Scale(float MaxZ, float MinZ)
         else
             sprintf(buf, str, labelValue); //Get label string in buf
         yofs=factorA*labelValue+factorB;
-
-        FONT_Write(FONT_FRAN, LCD_RED, BackGrColor, 440, WY(yofs) - 12, buf);
+        if(yofs<WHEIGHT-12)
+            FONT_Write(FONT_FRAN, LCD_RED, BackGrColor, 425, WY(yofs) - 12, buf);
     }
 
 }
@@ -1707,8 +1692,8 @@ static void DrawRX(int SelQu, int SelEqu)// SelQu=1, if quartz measurement  SelE
             sprintf(buf, str, labelValue); //Get label string in buf
 
         yofs = ((int)roundf(((labelValue - graphmin_i) * WHEIGHT) / grange_i) + 1);
-
-        FONT_Write(FONT_FRAN, LCD_RED, BackGrColor, 440, WY(yofs) - 12, buf);// WK
+        if(yofs<WHEIGHT-12)
+            FONT_Write(FONT_FRAN, LCD_RED, BackGrColor, 425, WY(yofs) - 12, buf);// WK
     }
 
     //Now draw X graph
@@ -2678,6 +2663,7 @@ void Scan(void) // Scan  or  Frequency        Button6
     {
         if (0 == autofast)
         {
+            //LCD_ShowActiveLayerOnly();
             FONT_Write(FONT_FRANBIG, LCD_RED, LCD_BLACK, 180, 100, "  Scanning...  ");
             ScanRX(0);
         }
@@ -3005,33 +2991,49 @@ void DrawLoadStoreStatus()
     LCD_Rectangle(LCD_MakePoint(454, 154), LCD_MakePoint(478, 179), memoryDrawColor);
 }
 
+static int Beeper=0;
+
+void OneBeep(int repeatNumber){ // one or (repeatNumber) of beeps
+int counter=repeatNumber;
+    if((BeepOn1==1)&&(Beeper==1)){
+        while (--counter>=0){
+            UB_TIMER2_Init_FRQ(880);
+            UB_TIMER2_Start();
+            Sleep(100);
+            UB_TIMER2_Stop();
+        }
+    }
+}
+
 
 void PANVSWR2_Proc(void)// **************************************************************************+*********
 {
-int Beeper=0, FirstTouch=0;
-
+    rqExitSWR=false;
     activeLayerX=1;
     BSP_LCD_SelectLayer(activeLayerX);
     LCD_ShowActiveLayerOnly();
     cursorVisible=0;// in the beginning not visible
     ClearScreen=1;
-    autofast=0;
+    autofast=0;// no fast mode
     Saving=0;
     redrawRequired=0;
     SetColours();
     loglog=CFG_GetParam(CFG_PARAM_LOGLOG);
     AutoCursor=CFG_GetParam(CFG_PARAM_CURSOR);
     ManualCursor=0;
+    if(CFG_GetParam(CFG_PARAM_PAN_CENTER_F)==1)
+        cursorPos= WWIDTH / 2;
+    else cursorPos=0;
     Switch=0;// menu 1
-    //SWRTone=0;
     isStored=0;
     holdScale=0;
     f1=CFG_GetParam(CFG_PARAM_PAN_F1);
     GetBS(f1/1000);
+    BSP_LCD_SelectLayer(activeLayerX);
     LCD_FillAll(BackGrColor);
     FONT_Write(FONT_FRANBIG, TextColor, BackGrColor, 120, 100, "Panoramic scan mode");
-    Sleep(1000);
-    while(TOUCH_IsPressed());
+    Sleep(500);
+
 
     //ianlee
     //Managment Memory
@@ -3080,100 +3082,78 @@ int Beeper=0, FirstTouch=0;
     else
         RedrawWindow();
 
-
     TEXTBOX_InitContext(&SWR1);
 
     TEXTBOX_Append(&SWR1, (TEXTBOX_t*)tb_PANVSWR);
     TEXTBOX_DrawContext(&SWR1);
+
     DrawFootText();
 
-    for(;;)
+    while(!TOUCH_IsPressed());
+
+    BSP_LCD_SelectLayer(!activeLayerX);
+    LCD_FillAll(BackGrColor);
+    BSP_LCD_SelectLayer(activeLayerX);
+    LCD_FillAll(BackGrColor);
+
+    while(!rqExitSWR)
     {
         Sleep(0); //for autosleep to work
+        if (TEXTBOX_HitTest(&SWR1)) Sleep(10);
+
         if (TOUCH_Poll(&pt))
         {
-            if(FirstTouch<1){
-                FirstTouch++;
-                BSP_LCD_SelectLayer(activeLayerX);
-                LCD_FillAll(BackGrColor);
-                BSP_LCD_SelectLayer(!activeLayerX);
-                LCD_FillAll(BackGrColor);
-            }
+            Beeper=1;
             if(pt.y<60) Frequency();//              Special Functions (invisible)
             else if((pt.y<190)&&(pt.x>60)&&(pt.x<400))
             {
                 DiagType();// next diagram type
-                ManualCursor=0;
                 ClearScreen=1;
-                if(BeepOn1==1){
-                    UB_TIMER2_Init_FRQ(880);
-                    UB_TIMER2_Start();
-                    Sleep(100);
-                    UB_TIMER2_Stop();
-                }
+                OneBeep(1);
                 Sleep(200);
             }
             else if((pt.y>205)&&(pt.y<235)&&(pt.x >=X0)){// Set Cursor
                 cursorPos=pt.x - X0;
+                if(cursorPos>WWIDTH-10) cursorPos=WWIDTH-10;
                 ManualCursor=1;
                 redrawRequired=1;
-                Beeper=1;
+                OneBeep(1);
+                Sleep(200);
             }
             else if((pt.x>=0)&&(pt.x<=44))
             {
-                Beeper=1;
                 if((pt.y>=93)&&(pt.y<=128)){//       "<"
-                    DecrCursor();
-                    if(cursorChangeCount>=5)
-                        Beeper=0;
                     autofast=0;
-                    //redrawRequired=1;
+                    redrawRequired=0;
+                    OneBeep(1);
+                    DecrCursor();
+                    while(TOUCH_IsPressed()){
+                        DecrCursor();
+                        if(cursorChangeCount>=5)
+                            Beeper=0;
+                    }
+                    cursorChangeCount=0;
                 }
                 else if((pt.y>=132)&&(pt.y<=167)){// ">"
-                    IncrCursor();
-                    if(cursorChangeCount>=5)
-                        Beeper=0;
                     autofast=0;
-                    //redrawRequired=1;
-                }
-               // else
-               //    Sleep(100);
-            }
-            if (TEXTBOX_HitTest(&SWR1)) {
-                if (rqExitSWR)
-                {
-                    rqExitSWR=false;
-                    while(TOUCH_IsPressed());
-                    autofast = 0;
-                    Sleep(100);
-
-                    free(SavedValues1);
-                    free(SavedValues2);
-                    free(SavedValues3);
-
-                    NotSleepMode = 0;
-                    return;
+                    redrawRequired=0;
+                    OneBeep(1);
+                    IncrCursor();
+                    while(TOUCH_IsPressed()){
+                        IncrCursor();
+                        if(cursorChangeCount>=5)
+                            Beeper=0;
+                    }
+                    cursorChangeCount=0;
                 }
             }
-            if(BeepOn1==1&&Beeper==1){
-                UB_TIMER2_Init_FRQ(880);
-                UB_TIMER2_Start();
-                Sleep(100);
-                UB_TIMER2_Stop();
-                Beeper=0;
-                redrawRequired=1;//in case of "Save Snapshot"
-            }
         }
-        else
-        {
-            cursorChangeCount = 0;
-            beep=0;
-        }
+           // redrawRequired=1;//in case of "Save Snapshot"
 
         if(autofast==0){
             holdScale=0;
         }
-        else{
+        else {
     // in fast mode alternate the active layer
             activeLayerX=!BSP_LCD_GetActiveLayer();
             BSP_LCD_SelectLayer(activeLayerX);
@@ -3190,8 +3170,11 @@ int Beeper=0, FirstTouch=0;
             redrawRequired=0;
         }
         LCD_ShowActiveLayerOnly();
-        NotSleepMode = autofast;
     }
+    Sleep(100);
+    free(SavedValues3);
+    free(SavedValues2);
+    free(SavedValues1);
 }
 
 
